@@ -1,4 +1,5 @@
 from typing import Optional, cast
+import logging
 
 from rcrscore.entities import Civilian, Entity, EntityID, Human
 from rcrscore.urn import EntityURN
@@ -86,28 +87,27 @@ class FireBrigadeHumanDetector(HumanDetector):
             self._logger.info(f"Target: {self._result}, Priority: {highest_priority:.8f}")
         else:
             self._logger.info("No target found")
-
+        priority_list = []
         # デバッグ：上位5件の要救助者の情報を出力
-        if self._logger.isEnabledFor(logging.info):
+        if self._logger.isEnabledFor(logging.INFO):
          # 優先度順にソート
-            priority_list = []
             for civilian in civilians:
                 if not isinstance(civilian, Civilian):
                     continue
                 if civilian.get_hp() <= 0 or civilian.get_buriedness() <= 0:
                     continue
-        
-            distance = self._world_info.get_distance(me, civilian.get_entity_id())
-            hp = civilian.get_hp()
-            distance_km = distance / 1000.0
-            priority = (1.0 / (distance_km / 100.0 + 1.0)) * (1.0 / (hp + 1.0))
-        
-            priority_list.append({
-                'id': civilian.get_entity_id(),
-                'distance': distance,
-                'hp': hp,
-                'priority': priority
-            })
+                # 以下のインデントをforに合わせて変更
+                distance = self._world_info.get_distance(me, civilian.get_entity_id())
+                hp = civilian.get_hp()
+                distance_km = distance / 1000.0
+                priority = (1.0 / (distance_km / 100.0 + 1.0)) * (1.0 / (hp + 1.0))
+            
+                priority_list.append({
+                    'id': civilian.get_entity_id(),
+                    'distance': distance,
+                    'hp': hp,
+                    'priority': priority
+                })
     
         # 優先度の高い順にソート
         priority_list.sort(key=lambda x: x['priority'], reverse=True)
