@@ -1,6 +1,6 @@
 DefaultTacticsAmbulanceTeam:
   HumanDetector: src.agent.module.complex.human_detector.SampleHumanDetector
-  Search: src.agent.module.complex.sample_search.Search
+  Search: src.agent.module.complex.search.Search
   ExtendActionTransport: adf_core_python.implement.action.default_extend_action_transport.DefaultExtendActionTransport
   ExtendActionMove: adf_core_python.implement.action.default_extend_action_move.DefaultExtendActionMove
   CommandExecutorAmbulance: adf_core_python.implement.centralized.default_command_executor_ambulance.DefaultCommandExecutorAmbulance
@@ -8,7 +8,7 @@ DefaultTacticsAmbulanceTeam:
 
 DefaultTacticsFireBrigade:
   HumanDetector: src.agent.module.complex.fire_brigade_human_detector.FireBrigadeHumanDetector
-  Search: src.agent.module.complex.sample_search.Search
+  Search: src.agent.module.complex.search.Search
   ExtendActionRescue: adf_core_python.implement.action.default_extend_action_rescue.DefaultExtendActionRescue
   ExtendActionMove: adf_core_python.implement.action.default_extend_action_move.DefaultExtendActionMove
   CommandExecutorFire: adf_core_python.implement.centralized.default_command_executor_fire.DefaultCommandExecutorFire
@@ -16,7 +16,7 @@ DefaultTacticsFireBrigade:
 
 DefaultTacticsPoliceForce:
   RoadDetector: src.agent.module.complex.road_detector.RoadDetector
-  Search: src.agent.module.complex.sample_search.Search
+  Search: src.agent.module.complex.search.Search
   ExtendActionClear: adf_core_python.implement.action.default_extend_action_clear.DefaultExtendActionClear
   ExtendActionMove: adf_core_python.implement.action.default_extend_action_move.DefaultExtendActionMove
   CommandExecutorPolice: adf_core_python.implement.centralized.default_command_executor_police.DefaultCommandExecutorPolice
