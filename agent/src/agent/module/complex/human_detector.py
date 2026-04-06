@@ -193,14 +193,19 @@ class SampleHumanDetector(HumanDetector):
         return False
 
     # 消防隊：埋没していない人は対象外
-    if myself.get_urn() == EntityURN.FIRE_BRIGADE and buriedness == 0:
-        self._logger.info(f"{target_entity_id}: fire brigade skips non-buried human")
-        return False
+    #if myself.get_urn() == EntityURN.FIRE_BRIGADE and buriedness == 0:
+    #    self._logger.info(f"{target_entity_id}: fire brigade skips non-buried human")
+    #    return False
 
     # 救急隊：埋没している人は対象外
     #if myself.get_urn() == EntityURN.AMBULANCE_TEAM and buriedness > 0:
      #   self._logger.info(f"{target_entity_id}: ambulance team skips buried human (buriedness = {buriedness})")
       #  return False
+
+    # ダメージがない（無傷）は対象外
+    damage: Optional[int] = target.get_damage()
+    if damage is None or damage == 0:
+        return False
 
     # 位置取得
     position_entity_id: Optional[EntityID] = target.get_position()
@@ -229,10 +234,7 @@ class SampleHumanDetector(HumanDetector):
     return True
 
 
-    # ダメージがない（無傷）は対象外
-    # damage: Optional[int] = target.get_damage()
-    # if damage is None or damage == 0:
-    #  return False
+    
 
   # 現在のターゲットを返す
   def get_target_entity_id(self) -> Optional[EntityID]:
