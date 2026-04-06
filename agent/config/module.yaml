@@ -1,5 +1,5 @@
 DefaultTacticsAmbulanceTeam:
-  HumanDetector: src.agent.module.complex.sample_human_detector.SampleHumanDetector
+  HumanDetector: src.agent.module.complex.human_detector.SampleHumanDetector
   Search: src.agent.module.complex.sample_search.SampleSearch
   ExtendActionTransport: adf_core_python.implement.action.default_extend_action_transport.DefaultExtendActionTransport
   ExtendActionMove: adf_core_python.implement.action.default_extend_action_move.DefaultExtendActionMove
