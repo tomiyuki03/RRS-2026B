@@ -1,6 +1,6 @@
 from typing import Optional, cast
 
-from rcrscore.entities import Building, EntityID, GasStation, Refuge, Road
+from rcrscore.entities import Building, EntityID, GasStation, Refuge, Road, PoliceForce, AmbulanceTeam, FireBrigade, Civilian
 
 from adf_core_python.core.agent.communication.message_manager import MessageManager
 from adf_core_python.core.agent.develop.develop_data import DevelopData
@@ -15,8 +15,13 @@ from adf_core_python.core.component.module.algorithm.path_planning import (
 from adf_core_python.core.component.module.complex.road_detector import RoadDetector
 
 # 評価計算：重みまとめ
-_WEIGHT_DISTANCE = 10.0
-_WEIGHT_PRIORITY_ROAD = 0.5
+_WEIGHT_DISTANCE = 1000.0
+_WEIGHT_PRIORITY_ROAD = 1.0
+_WEIGHT_POLICEFORCE = 50.0
+_WEIGHT_FIREBRIGADE = 4.0
+_WEIGHT_AMBULANCETEAM = 4.0
+_WEIGHT_CIVILIAN = 2.0
+
 
 class RoadDetector(RoadDetector):
   def __init__(
@@ -117,7 +122,12 @@ class RoadDetector(RoadDetector):
           if road.get_blockades() == []:
             self._target_areas.remove(self._result)
             self._result = None
+    
 
+    self._police = self._world_info.get_entities_of_types([PoliceForce])
+    self._fire = self._world_info.get_entities_of_types([FireBrigade])
+    self._ambulance = self._world_info.get_entities_of_types([AmbulanceTeam])
+    # self._civilian = self._world_info.get_entities_of_types([Civilian])
     return self
 
   def calculate(self) -> RoadDetector:
@@ -194,6 +204,10 @@ class RoadDetector(RoadDetector):
     return (
       self._score_distance(target_area) * _WEIGHT_DISTANCE
       + self._score_priority_road(target_area) * _WEIGHT_PRIORITY_ROAD
+      + self._score_PoliceForce(target_area) * _WEIGHT_POLICEFORCE
+      + self._score_FireBrigade(target_area) * _WEIGHT_FIREBRIGADE
+      + self._score_AmbulanceTeam(target_area) * _WEIGHT_AMBULANCETEAM
+      # + self._score_civilians(target_area) * _WEIGHT_CIVILIAN
     )
   
 
@@ -211,5 +225,36 @@ class RoadDetector(RoadDetector):
   def _score_priority_road(self,target_area:EntityID) -> float:
     return 1.0 if target_area in self._priority_roads else 0.0
 
+  # 重複ペナルティスコア：他の土木隊がいるエリアは評価値を下げる
+  def _score_PoliceForce(self, target_area):
+    count = 0
+    for agent in self._police:
+        if agent.get_position() == target_area:
+            count += 1
+    return -count
+
+  # 消防隊：消防隊がいるエリアの評価値を上げる
+  def _score_FireBrigade(self, target_area):
+    count = 0
+    for agent in self._fire:
+        if agent.get_position() == target_area:
+            count += 1
+    return count
+  
+  # 救急隊：救急隊がいるエリアの評価値を上げる
+  def _score_AmbulanceTeam(self, target_area):
+    count = 0
+    for agent in self._ambulance:
+        if agent.get_position() == target_area:
+            count += 1
+    return count
+  
+  def _score_civilians(self, target_area):
+    count = 0
+    for civ in self._:
+        pos = civ.get_position()
+        if pos == target_area:
+            count += 1
+    return count
   def get_target_entity_id(self) -> Optional[EntityID]:
     return self._result
