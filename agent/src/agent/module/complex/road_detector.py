@@ -1,6 +1,6 @@
 from typing import Optional, cast
 
-from rcrscore.entities import Building, EntityID, GasStation, Refuge, Road
+from rcrscore.entities import Building, EntityID, Refuge, Road
 
 from adf_core_python.core.agent.communication.message_manager import MessageManager
 from adf_core_python.core.agent.develop.develop_data import DevelopData
@@ -50,7 +50,7 @@ class RoadDetector(RoadDetector):
 
     # 建物の周りの道路を全て集める
     self._target_areas: set[EntityID] = set()
-    entities = self._world_info.get_entities_of_types([Refuge, Building, GasStation])
+    entities = self._world_info.get_entities_of_types([Refuge, Building])
     for entity in entities:
       if not isinstance(entity, Building):
         continue
@@ -77,7 +77,7 @@ class RoadDetector(RoadDetector):
       return self
 
     self._target_areas = set()
-    entities = self._world_info.get_entities_of_types([Refuge, Building, GasStation])
+    entities = self._world_info.get_entities_of_types([Refuge, Building])
     for entity in entities:
       building: Building = cast(Building, entity)
       for entity_id in building.get_neighbors():
@@ -115,40 +115,71 @@ class RoadDetector(RoadDetector):
 
     return self
 
+
+
+#修正前 if 優先道路が１本でも残ってる:
+#         全候補の中から近いものを選ぶ
+
+#修正後 if 優先道路が残っている:
+#         優先道路の中から近いものを選ぶ
+#       else:
+#          全候補の中から近いものを選ぶ
+
+
   def calculate(self) -> RoadDetector:
+    # 現在位置を取得
     if self._result is None:
       position_entity_id = self._agent_info.get_position_entity_id()
       if position_entity_id is None:
         return self
+      
+      # 今いる場所が対象道路なら，まずそこを目標にする
       if position_entity_id in self._target_areas:
         self._result = position_entity_id
         return self
+      
+      # priority_roads の中に，すでに target_areas から外れた道路があれば削除する
       remove_list = []
       for entity_id in self._priority_roads:
         if entity_id not in self._target_areas:
           remove_list.append(entity_id)
 
       self._priority_roads = self._priority_roads - set(remove_list)
+
+      agent_position = self._agent_info.get_position_entity_id()
+      if agent_position is None:
+            return self
+
+      target_candidates = set()
+
+      # まずは避難所周辺道路を最優先で使う
       if len(self._priority_roads) > 0:
-        agent_position = self._agent_info.get_position_entity_id()
-        if agent_position is None:
-          return self
-        _nearest_target_area = agent_position
-        _nearest_distance = float("inf")
-        for target_area in self._target_areas:
-          if (
-            self._world_info.get_distance(agent_position, target_area)
-            < _nearest_distance
-          ):
-            _nearest_target_area = target_area
-            _nearest_distance = self._world_info.get_distance(
-              agent_position, target_area
-            )
-        path: list[EntityID] = self._path_planning.get_path(
-          agent_position, _nearest_target_area
-        )
-        if path is not None and len(path) > 0:
-          self._result = path[-1]
+            target_candidates = self._priority_roads
+      else:
+            target_candidates = self._target_areas
+        
+      # 候補がなければ終了
+      if len(target_candidates) == 0:
+          return self  
+      
+
+      # 候補の中から最も近い道路を選ぶ
+      nearest_target_area = None
+      nearest_distance = float("inf")
+
+      for target_area in target_candidates:
+          distance = self._world_info.get_distance(agent_position, target_area)
+          if distance < nearest_distance:
+              nearest_target_area = target_area
+              nearest_distance = distance
+
+      # 経路が取れた場合のみ目標に設定する
+      if nearest_target_area is not None:
+          path: list[EntityID] = self._path_planning.get_path(
+              agent_position, nearest_target_area
+          )
+          if path is not None and len(path) > 0:
+              self._result = path[-1]
 
     return self
 
