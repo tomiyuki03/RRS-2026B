@@ -45,7 +45,7 @@ tasks:
         if [ -z "$OUTPUT" ]; then
           BRANCH=$(git rev-parse --abbrev-ref HEAD | tr '/' '-')
           HASH=$(git rev-parse --short HEAD)
-          OUTPUT="ait-rescue-python-${BRANCH}-${HASH}.zip"
+          OUTPUT="rrs-2026b-${BRANCH}-${HASH}.zip"
         fi
         if [[ "$OUTPUT" != /* ]]; then
           OUTPUT="$(pwd)/$OUTPUT"
