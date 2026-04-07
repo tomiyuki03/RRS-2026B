@@ -20,3 +20,5 @@ reference/
 
 # ADF-Python Precompute files
 precompute/
+
+*.zip
