@@ -43,7 +43,9 @@ tasks:
       - |
         OUTPUT="{{.OUTPUT}}"
         if [ -z "$OUTPUT" ]; then
-          OUTPUT="ait-rescue-python-$(date +%Y%m%d%H%M%S).zip"
+          BRANCH=$(git rev-parse --abbrev-ref HEAD | tr '/' '-')
+          HASH=$(git rev-parse --short HEAD)
+          OUTPUT="ait-rescue-python-${BRANCH}-${HASH}.zip"
         fi
         if [[ "$OUTPUT" != /* ]]; then
           OUTPUT="$(pwd)/$OUTPUT"
