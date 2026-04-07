@@ -1,0 +1,34 @@
+stages:
+  - check
+
+variables:
+  UV_LINK_MODE: copy
+
+.common:
+  image: ghcr.io/astral-sh/uv:debian-slim
+  stage: check
+  allow_failure: false
+  before_script:
+    - apt update && apt install -y git
+    - uv sync
+  rules:
+    - changes:
+        - src/**/*
+        - main.py
+        - pyproject.toml
+        - .python-version
+
+ruff-lint:
+  extends: .common
+  script:
+    - uv run ruff check src/ --output-format=gitlab --preview
+
+ruff-format:
+  extends: .common
+  script:
+    - uv run ruff format --check src/
+
+ty-typecheck:
+  extends: .common
+  script:
+    - uv run ty check src/

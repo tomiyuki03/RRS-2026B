@@ -1,3 +1,22 @@
-**/.DS_Store
-**/*.log
-*.pyc
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Log files
+*.log
+
+# macOS
+.DS_Store
+
+# Reference data (Java agent source, Javadoc, etc.)
+reference/
+
+# ADF-Python Precompute files
+precompute/
