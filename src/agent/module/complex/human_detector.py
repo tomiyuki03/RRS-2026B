@@ -106,28 +106,45 @@ class SampleHumanDetector(HumanDetector):
     ]
     self._logger.info(f"cluster valid civilians count = {len(cluster_valid_human_entities)}")
 
-    # クラスタ内に対象がいれば，最も近い市民を選ぶ
+    # クラスタ内に対象がいれば，priority が最も高い市民を選ぶ
     if len(cluster_valid_human_entities) != 0:
-        nearest_human_entity = cluster_valid_human_entities[0]
-        nearest_distance = self._world_info.get_distance(
-            self._agent_info.get_entity_id(),
-            nearest_human_entity.get_entity_id(),
-        )
-
+        highest_priority_entity = None
+        highest_priority = None
+        
         for entity in cluster_valid_human_entities:
             distance = self._world_info.get_distance(
                 self._agent_info.get_entity_id(),
                 entity.get_entity_id(),
             )
-            if distance < nearest_distance:
-                nearest_distance = distance
-                nearest_human_entity = entity
+            hp = entity.get_hp()
+
+            distance_score = 1.0 / (distance + 1.0)
+            hp_score = 1.0 / (hp + 1.0)
+            priority = distance_score + (5.0 * hp_score)
+        
+            self._logger.info(
+                f"candidate from cluster -> id = {entity.get_entity_id()}," 
+                f"distance = {distance}, hp = {hp}, priority = {priority}"
+            )
+
+            if highest_priority is None or priority > highest_priority:
+                highest_priority = priority
+                highest_priority_entity = entity
+
+        selected_distance = self._world_info.get_distance(
+            self._agent_info.get_entity_id(),
+            highest_priority_entity.get_entity_id(),
+        )
+
+        selected_hp = highest_priority_entity.get_hp()
 
         self._logger.info(
-            f"selected from cluster -> id = {nearest_human_entity.get_entity_id()}, distance = {nearest_distance}"
-        )
-        return nearest_human_entity.get_entity_id()
+                f"selected from cluster -> id = {highest_priority_entity.get_entity_id()}," 
+                f"distance = {selected_distance}, hp = {selected_hp}, priority = {highest_priority}"
+            )
 
+        return highest_priority_entity.get_entity_id()
+    
     # クラスタ内にいない場合，全体から探索
     world_valid_human_entities: list[Entity] = [
         entity
@@ -136,26 +153,50 @@ class SampleHumanDetector(HumanDetector):
     ]
     self._logger.info(f"world valid civilians count = {len(world_valid_human_entities)}")
 
-    # 全体から最も近い市民を選択
+    # 全体から priority が最も高い市民を選択
     if len(world_valid_human_entities) != 0:
-        nearest_human_entity = world_valid_human_entities[0]
-        nearest_distance = self._world_info.get_distance(
-            self._agent_info.get_entity_id(),
-            nearest_human_entity.get_entity_id(),
-        )
+        highest_priority_entity = None
+        highest_priority = None
+
+        
         for entity in world_valid_human_entities:
+
+            # 自分から有効な市民までの距離を取得
             distance = self._world_info.get_distance(
                 self._agent_info.get_entity_id(),
                 entity.get_entity_id(),
             )
-            if distance < nearest_distance:
-                nearest_distance = distance
-                nearest_human_entity = entity
+            hp = entity.get_hp()
 
-        self._logger.info(
-            f"selected from world -> id = {nearest_human_entity.get_entity_id()}, distance = {nearest_distance}"
+            distance_score = 1.0 / (distance + 1.0)
+            hp_score = 1.0 / (hp + 1.0)
+            priority = distance_score + (5.0 * hp_score)
+        
+            # 各候補の情報をログ出力
+            self._logger.info(
+                f"candidate from world -> id = {entity.get_entity_id()}," 
+                f"distance = {distance}, hp = {hp}, priority = {priority}"
+            )
+
+            # 今までの最大priorityと比較し，より大きければ更新
+            if highest_priority is None or priority > highest_priority:
+                highest_priority = priority
+                highest_priority_entity = entity
+
+        selected_distance = self._world_info.get_distance(
+            self._agent_info.get_entity_id(),
+            highest_priority_entity.get_entity_id(),
         )
-        return nearest_human_entity.get_entity_id()
+        
+        selected_hp = highest_priority_entity.get_hp()
+
+        # 最終的に選択された市民をログ出力
+        self._logger.info(
+                f"selected from world -> id = {highest_priority_entity.get_entity_id()}," 
+                f"distance = {selected_distance}, hp = {selected_hp}, priority = {highest_priority}"
+            )
+
+        return highest_priority_entity.get_entity_id()
 
     self._logger.info("no valid target found")
     return None
@@ -198,9 +239,9 @@ class SampleHumanDetector(HumanDetector):
     #    return False
 
     # 救急隊：埋没している人は対象外
-    #if myself.get_urn() == EntityURN.AMBULANCE_TEAM and buriedness > 0:
-     #   self._logger.info(f"{target_entity_id}: ambulance team skips buried human (buriedness = {buriedness})")
-      #  return False
+    if myself.get_urn() == EntityURN.AMBULANCE_TEAM and buriedness > 0:
+        self._logger.info(f"{target_entity_id}: ambulance team skips buried human (buriedness = {buriedness})")
+        return False
 
     # ダメージがない（無傷）は対象外
     damage: Optional[int] = target.get_damage()
