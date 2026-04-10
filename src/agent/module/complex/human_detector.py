@@ -96,13 +96,20 @@ class SampleHumanDetector(HumanDetector):
     cluster_entities: list[Entity] = self._clustering.get_cluster_entities(
         cluster_index
     )
-    self._logger.info(f"cluster entities count = {len(cluster_entities)}")
+
+    # クラスタ内エリアのIDだけを集める
+    cluster_entity_ids = {
+        entity.get_entity_id() for entity in cluster_entities
+    }
 
     # クラスタ内で「有効な市民」のみ抽出
     cluster_valid_human_entities: list[Entity] = [
         entity
-        for entity in cluster_entities
-        if self._is_valid_human(entity.get_entity_id()) and isinstance(entity, Civilian)
+        for entity in self._world_info.get_entities_of_types([Civilian])
+        if isinstance(entity, Civilian)
+        and entity.get_position() is not None
+        and entity.get_position() in cluster_entity_ids
+        and self._is_valid_human(entity.get_entity_id())
     ]
     self._logger.info(f"cluster valid civilians count = {len(cluster_valid_human_entities)}")
 
@@ -112,6 +119,8 @@ class SampleHumanDetector(HumanDetector):
         highest_priority = None
         
         for entity in cluster_valid_human_entities:
+
+             # 自分から有効な市民までの距離を取得
             distance = self._world_info.get_distance(
                 self._agent_info.get_entity_id(),
                 entity.get_entity_id(),
@@ -121,12 +130,14 @@ class SampleHumanDetector(HumanDetector):
             distance_score = 1.0 / (distance + 1.0)
             hp_score = 1.0 / (hp + 1.0)
             priority = distance_score + (5.0 * hp_score)
-        
+
+            # 各候補の情報をログ出力
             self._logger.info(
                 f"candidate from cluster -> id = {entity.get_entity_id()}," 
                 f"distance = {distance}, hp = {hp}, priority = {priority}"
             )
 
+            # 今までの最大priorityと比較し，より大きければ更新
             if highest_priority is None or priority > highest_priority:
                 highest_priority = priority
                 highest_priority_entity = entity
@@ -138,6 +149,7 @@ class SampleHumanDetector(HumanDetector):
 
         selected_hp = highest_priority_entity.get_hp()
 
+        # 最終的に選択された市民をログ出力
         self._logger.info(
                 f"selected from cluster -> id = {highest_priority_entity.get_entity_id()}," 
                 f"distance = {selected_distance}, hp = {selected_hp}, priority = {highest_priority}"
