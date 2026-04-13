@@ -12,17 +12,20 @@ from adf_core_python.core.agent.precompute.precompute_data import PrecomputeData
 from adf_core_python.core.component.module.algorithm.path_planning import (
   PathPlanning,
 )
+from adf_core_python.core.component.module.algorithm.clustering import Clustering
 from adf_core_python.core.component.module.complex.road_detector import RoadDetector
+from rcrscore.urn import EntityURN
 
 # 評価計算：重みまとめ
-_WEIGHT_DISTANCE = 1000.0
-_WEIGHT_PRIORITY_ROAD = 1.0
-_WEIGHT_POLICEFORCE = 50.0
-_WEIGHT_FIREBRIGADE = 4.0
-_WEIGHT_AMBULANCETEAM = 4.0
-_WEIGHT_CIVILIAN = 2.0
-
-
+_WEIGHT_DISTANCE = 600.0
+_WEIGHT_PRIORITY_ROAD = 0
+_WEIGHT_POLICEFORCE = 200.0
+_WEIGHT_FIREBRIGADE = 1000.0
+_WEIGHT_AMBULANCETEAM = 1000.0
+_WEIGHT_CIVILIAN = 1000.0
+_WEIGHT_REFUGE_DISTANCE = 400.0
+_WEIGHT_CLUSTERING = 400.0
+_PRIOLITY_MIN = -10000
 class RoadDetector(RoadDetector):
   def __init__(
     self,
@@ -46,6 +49,19 @@ class RoadDetector(RoadDetector):
 
     self.register_sub_module(self._path_planning)
     self._result: Optional[EntityID] = None
+
+     # クラスタリングモジュールの取得（エリア分割用）
+    self._clustering: Clustering = cast(
+      Clustering,
+      module_manager.get_module(
+        "SampleHumanDetector.Clustering",
+        "adf_core_python.implement.module.algorithm.k_means_clustering.KMeansClustering",
+      ),
+    )
+
+    # サブモジュールとして登録
+    self.register_sub_module(self._clustering)
+
 
   def precompute(self, precompute_data: PrecomputeData) -> RoadDetector:
     super().precompute(precompute_data)
@@ -77,6 +93,7 @@ class RoadDetector(RoadDetector):
         if isinstance(neighbor, Road):
           self._priority_roads.add(entity_id)
 
+    self._refuges = self._world_info.get_entities_of_types([Refuge])
     return self
 
   def prepare(self) -> RoadDetector:
@@ -123,11 +140,45 @@ class RoadDetector(RoadDetector):
             self._target_areas.remove(self._result)
             self._result = None
     
-
     self._police = self._world_info.get_entities_of_types([PoliceForce])
     self._fire = self._world_info.get_entities_of_types([FireBrigade])
     self._ambulance = self._world_info.get_entities_of_types([AmbulanceTeam])
-    # self._civilian = self._world_info.get_entities_of_types([Civilian])
+    self._civilian = self._world_info.get_entities_of_types([Civilian])
+
+
+    # 現在位置の取得
+    agent_position = self._agent_info.get_position_entity_id()
+    
+    _best_refuge_distance = float("inf")
+    _best_refuge = agent_position
+    
+    # 最も近い避難所の算出
+    for entity in self._refuges:
+      _distance = self._world_info.get_distance(entity.get_entity_id(), agent_position)
+      if _best_refuge_distance > _distance:
+        _best_refuge_distance = _distance
+        _best_refuge = entity
+    
+    self._best_refuge = _best_refuge
+    self._best_refuge_distance = _best_refuge_distance
+
+    # 現在位置から最も近い避難所までの道を考える
+    self._refuge_paths = []
+   
+    nearest = self._nearest_agent(self._civilian)
+
+    if nearest is not None:
+        start = nearest.get_position()
+        if start is not None:
+            path = self._path_planning.get_path(
+                start,
+                self._best_refuge.get_entity_id()
+            )
+            if path is not None:
+                self._refuge_paths.append(set(path))
+
+
+   
     return self
 
   def calculate(self) -> RoadDetector:
@@ -181,7 +232,7 @@ class RoadDetector(RoadDetector):
       
       # 評価値が最大のものをターゲットとして指定
       _highest_target_area = agent_position
-      _highest_evaluate = float("-inf")
+      _highest_evaluate = _PRIOLITY_MIN
 
       for target_area in self._target_areas:
         _evaluate_target_area = self._evaluate(target_area)
@@ -207,7 +258,9 @@ class RoadDetector(RoadDetector):
       + self._score_PoliceForce(target_area) * _WEIGHT_POLICEFORCE
       + self._score_FireBrigade(target_area) * _WEIGHT_FIREBRIGADE
       + self._score_AmbulanceTeam(target_area) * _WEIGHT_AMBULANCETEAM
-      # + self._score_civilians(target_area) * _WEIGHT_CIVILIAN
+      + self._score_civilians(target_area) * _WEIGHT_CIVILIAN
+      + self._score_refuge_distance(target_area) * _WEIGHT_REFUGE_DISTANCE
+      + self._score_clustering(target_area) * _WEIGHT_CLUSTERING
     )
   
 
@@ -225,36 +278,123 @@ class RoadDetector(RoadDetector):
   def _score_priority_road(self,target_area:EntityID) -> float:
     return 1.0 if target_area in self._priority_roads else 0.0
 
-  # 重複ペナルティスコア：他の土木隊がいるエリアは評価値を下げる
+  # 土木隊ペナルティスコア：他の土木隊がいるエリアは評価値を下げる
+  # ターゲットエリアと自身以外の土木隊の中で一番ターゲットエリアに近いエージェントとの距離をみて，
+  # 一定距離内にいるかつ自身のIDが奇数なら離れるようにする
   def _score_PoliceForce(self, target_area):
-    count = 0
-    for agent in self._police:
-        if agent.get_position() == target_area:
-            count += 1
-    return -count
 
-  # 消防隊：消防隊がいるエリアの評価値を上げる
+    _shortest_distance = float("inf")
+    myself = self._agent_info.get_myself()
+    if myself is None:
+      return 0
+    for pol in self._police:  
+      # 自分はスルーされるように
+      if pol.get_entity_id() == myself.get_entity_id():
+        _distance = float("inf")
+      else:
+      
+        _distance = self._world_info.get_distance(target_area,pol.get_position())
+
+      if _shortest_distance > _distance:
+        _shortest_distance  = _distance
+
+    if _shortest_distance < 3000 :
+
+      if myself.get_entity_id().get_value() % 2 == 0:
+          return float("-inf")
+      
+      return 0
+        
+    elif _shortest_distance < 6000 :
+      return -60
+    
+    return 0
+  
+  # 消防隊スコア：消防隊がいるエリアの評価値を上げる
   def _score_FireBrigade(self, target_area):
-    count = 0
-    for agent in self._fire:
-        if agent.get_position() == target_area:
-            count += 1
-    return count
+     return self._agent_erea_count(self._fire,target_area)
   
-  # 救急隊：救急隊がいるエリアの評価値を上げる
+  # 救急隊スコア：救急隊がいるエリアの評価値を上げる
   def _score_AmbulanceTeam(self, target_area):
+     return self._agent_erea_count(self._ambulance,target_area)
+  
+  # 市民スコア：市民がいるエリア(近隣の道も含む)の評価値を上げる
+  def _score_civilians(self, target_area):   
+    return self._agent_erea_count(self._civilian,target_area)
+  
+ 
+  # 避難経路スコア：現在位置から避難所までの道に含まれている場合スコアを増やす
+  def _score_refuge_distance(self,target_area):
+      # 経路が存在するか確認
+    for path_set in self._refuge_paths:
+      if target_area in path_set:
+        return 1.0
+    return 0.0
+  
+  # クラスタリングスコア：クラスタリング内のエリアの評価値を上げる
+  def _score_clustering(self,target_area):
+    my_cluster = self._clustering.get_cluster_index(
+       self._agent_info.get_myself().get_entity_id()
+    )
+    target_cluster = self._clustering.get_cluster_index(target_area)
+
+    if my_cluster is None or target_cluster is None:
+        return 0.0
+
+    return 1.0 if target_cluster == my_cluster else -1.0
+   # エリア内近隣にいるエージェントをカウントする
+  def _agent_erea_count(self,agent,target_area):
     count = 0
-    for agent in self._ambulance:
-        if agent.get_position() == target_area:
-            count += 1
+    _neighbor_road = set()
+    target_entity = self._world_info.get_entity(target_area)
+
+    # 近隣道路を集める
+    for entity_id in target_entity.get_neighbors():
+        neighbor = self._world_info.get_entity(entity_id)
+        if isinstance(neighbor, Road):
+          _neighbor_road.add(entity_id)
+
+    # 該当種類のエージェントが近隣道路にいるなら+0.5,その場にいるなら+1
+    for age in agent:
+      pos = age.get_position()
+      if pos == target_area:
+        count += 1
+      if pos in _neighbor_road:
+        count += 0.3
+
     return count
   
-  def _score_civilians(self, target_area):
-    count = 0
-    for civ in self._:
-        pos = civ.get_position()
-        if pos == target_area:
-            count += 1
-    return count
+  # 自身と一番近い指定タイプのエージェントを返す
+  def _nearest_agent(self,agents):
+    _shortest_distance = float("inf")
+    _near_age = None  
+
+    my_pos = self._agent_info.get_position_entity_id()
+    if my_pos is None:
+        return None
+
+    for age in agents:
+        pos = age.get_position()
+        if pos is None:
+            continue
+
+        # Civilianの場合：避難所内は無視
+        if isinstance(age, Civilian):
+            position = self._world_info.get_entity(pos)
+            if position is None:
+                continue
+            if position.get_urn() == EntityURN.REFUGE:
+                continue
+
+        distance = self._world_info.get_distance(my_pos, pos)
+
+        if distance < _shortest_distance:
+            _shortest_distance = distance
+            _near_age = age
+
+    return _near_age
+
+ 
+
   def get_target_entity_id(self) -> Optional[EntityID]:
     return self._result
