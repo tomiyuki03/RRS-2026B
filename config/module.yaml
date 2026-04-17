@@ -40,6 +40,9 @@ Search:
 
 RoadDetector:
   PathPlanning: adf_core_python.implement.module.algorithm.a_star_path_planning.AStarPathPlanning
+  Clustering: adf_core_python.implement.module.algorithm.k_means_clustering.KMeansClustering
+  PoliceSearch: src.agent.module.complex.police_search.PoliceSearch
+
 
 SampleHumanDetector:
   Clustering: adf_core_python.implement.module.algorithm.k_means_clustering.KMeansClustering
