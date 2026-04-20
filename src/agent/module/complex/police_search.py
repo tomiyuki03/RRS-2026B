@@ -1,5 +1,7 @@
 from typing import Optional, cast
 
+import math
+
 from rcrscore.entities import Building, Entity, EntityID, Refuge, Road, PoliceForce
 
 from adf_core_python.core.agent.communication.message_manager import MessageManager
@@ -37,7 +39,10 @@ class PoliceSearch(Search):
     # 視界内の道路
     self._visible_roads: set[EntityID] = set()
     # 全ての土木隊のIDを取得
-    self._superior_police_ids: list[EntityID] = []
+    self._superior_police_ids:set[EntityID] = set()
+    #自分のクラスタから近い順にクラスタを保持
+    self._cluster_priority_list:list[int] = list()
+
 
     self._logger.info(
       f"Superior agents to avoid: {[pid.get_value() for pid in self._superior_police_ids]}"
@@ -72,24 +77,12 @@ class PoliceSearch(Search):
   def update_info(self, message_manager: MessageManager) -> Search:
     super().update_info(message_manager)
     if self.get_count_update_info() > 1:
-      # 視界内に入った道路をログに出力(debug)
-      changed_entities = self._world_info.get_change_set()
-      self._visible_roads = [
-        entity_id
-      for entity_id in changed_entities.get_changed_entities()
-        if isinstance(self._world_info.get_entity(entity_id), Road)
-    ]
 
-      # 視界内の道路だった場合未探索リストから除外する
-      for road_id in self._visible_roads:
-        if road_id in self._unreached_road_ids:
-          self._unreached_road_ids.discard(road_id)
       return self
-
 
     # 現在地の確認とリストの更新
     searched_road_id = self._agent_info.get_position_entity_id()
-    # 建物の中にいる場合、その建物を探索済みにする
+    # 道路上にいる場合、その道路を探索済みにする
     if searched_road_id is not None:
       self._unreached_road_ids.discard(searched_road_id)
 
@@ -97,45 +90,31 @@ class PoliceSearch(Search):
     if len(self._unreached_road_ids) == 0:
       self._unreached_road_ids = self._get_search_targets()
 
-    # 最初の一回のみ優先道路を取得
-    # if len(self._priority_roads) == 0:
-    #   for entity in self._world_info.get_entities_of_types([Refuge]):# 避難所だけをentitiesに入れている
-    #     if not isinstance(entity, Building):
-    #       continue
-    #     for entity_id in entity.get_neighbors():
-    #       neighbor = self._world_info.get_entity(entity_id)
-    #       if isinstance(neighbor, Road):
-    #         self._priority_roads.add(entity_id)
-    #   # 「優先道路を全部で50本見つけた」という初期化の結果
-    #   self._logger.debug(f"priority_roads_registered: {[str(id) for id in self._priority_roads]}")
+    #視界内の道路を判定済みにし，探索リストを更新する
+    self._update_unreached_roads()
 
-
+    #最初の一回のみ優先道路を取得
+    if len(self._priority_roads) == 0:
+      for entity in self._world_info.get_entities_of_types([Refuge]):# 避難所だけをentitiesに入れている
+        if not isinstance(entity, Building):
+          continue
+        for entity_id in entity.get_neighbors():
+          neighbor = self._world_info.get_entity(entity_id)
+          if isinstance(neighbor, Road):
+            self._priority_roads.add(entity_id)
+      # 「優先道路を全部で50本見つけた」という初期化の結果
+      self._logger.debug(f"priority_roads_registered: {[str(id) for id in self._priority_roads]}")
 
     #自分よりIDの小さい土木隊のIDを取得
-    if len(self._superior_police_ids) == 0:
-      all_police = sorted(
-        self._world_info.get_entities_of_types([PoliceForce]),
-        key=lambda police: police.get_entity_id().get_value(),
-      )
-
-      my_id = self._agent_info.get_entity_id()
-
-      for police in all_police:
-        police_id = police.get_entity_id()
-        if police_id.get_value() < my_id.get_value():
-          self._superior_police_ids.append(police_id)
-        else:
-          # IDは昇順なので、自分以降はチェック不要
-          self._logger.debug(f"superior_police_id: {self._superior_police_ids}")
-          break
-
-    self._logger.debug(
-      f"unreached_road_ids: {[str(id) for id in self._unreached_road_ids]}"
-    )
-
+    if not self._superior_police_ids:
+      self._update_superior_police_ids()
+    #if not self._cluster_priority_list:
+     # self._init_cluster_priority()
+       
     return self
 
   def calculate(self) -> Search:
+    self._logger.debug(f"[{self._agent_info.get_time()}]police search calculate")
     # 自分のクラスタを優先し，途中に優先道路があれば確認する
     target_road_id: Optional[EntityID] = None
     target_score: Optional[float] = None
@@ -146,10 +125,9 @@ class PoliceSearch(Search):
       self._agent_info.get_entity_id()
     )
 
-    self._logger.debug(f"befor score: {score}")
     # 行ってない道を調べる
     for road_id in self._unreached_road_ids:
-      # 現在地から建物までの直線距離を取得
+      #現在地から建物までの直線距離を取得
       distance = self._world_info.get_distance(
         self._agent_info.get_entity_id(), road_id
       )
@@ -159,26 +137,28 @@ class PoliceSearch(Search):
 
       # 道が自分のクラスタと同じだった場合重みをプラス
       if self._clustering.get_cluster_index(road_id) == cluster_index:
-        score = score * 100.0  # 100は仮定値
+        score = score * 1000.0  # 100は仮定値
 
       # その道が優先道路なら優先度を上げる
       if road_id in self._priority_roads:
         score *= 50
 
- 
       # #自分よりIDの小さい部隊がいた場合，スコアを下げる
-      # repulsion_sum = 0.0
-      # for police_id in self._superior_police_ids:
-      #   police = self._world_info.get_entity(police_id)
-      #   dis = self._world_info.get_distance(road_id, police)
-      #   if dis < 100000:
-      #     repulsion_sum += 100000000 / (dis + 1) ** 2
-      #     # self._logger.debug(f"police_distance: {dis}")
-      
-      # score = score / (repulsion_sum + 1)
-      # self._logger.debug(f"after score: {score}") 
+      #repulsion_sum = 0.0
+      for police_id in self._superior_police_ids:
+        if self._world_info.get_entity(police_id) is None:
+          continue
+        try:
+          dis = self._world_info.get_distance(road_id, police_id)
+          if dis < 50000:
+            #repulsion_sum += 10000000000 / (dis + 1) ** 2
+            score = 0.0
+            break
+        except Exception as e:
+          # 万が一エラーが出ても、ここで止まらないようにする
+          self._logger.error(f"Distance calculation error: {e}")
+          continue
 
-      # scoreが大きいものにターゲットを更新
       if target_score is None or target_score < score:
         target_road_id = road_id
         target_score = score
@@ -186,49 +166,77 @@ class PoliceSearch(Search):
     self._result = target_road_id
     return self
 
-  # def calculate(self) -> Search:
-  #   #現時点で一番近い建物のIDと距離の変数を初期化
-  #   nearest_building_id: Optional[EntityID] = None
-  #   nearest_distance: Optional[float] = None
-
-  #   #行ってない建物を調べる
-  #   for building_id in self._unreached_building_ids:
-  #     distance = self._world_info.get_distance(
-  #       self._agent_info.get_entity_id(), building_id
-  #     )
-
-  #     #一番近ければ変数を更新
-  #     if nearest_distance is None or distance < nearest_distance:
-  #       nearest_building_id = building_id
-  #       nearest_distance = distance
-  #   self._result = nearest_building_id
-  #   return self
-
   # 決定したIDを渡す
   def get_target_entity_id(self) -> Optional[EntityID]:
     return self._result
 
-  # ターゲットになる建物のリストをつくる
+  # ターゲットになる道路のリストをつくる
   def _get_search_targets(self) -> set[EntityID]:
-    # 自分の担当クラスタの特定
-    cluster_index: int = self._clustering.get_cluster_index(
-      self._agent_info.get_entity_id()
-    )
-    # #クラスタ内のエンティティを取得
-    # cluster_entities: list[Entity] = self._clustering.get_cluster_entities(
-    #   cluster_index
-    # )
-    # #建物のリストの作成
-    # building_entity_ids: list[EntityID] = [
-    #   entity.get_entity_id()
-    #   for entity in cluster_entities
-    #   if isinstance(entity, Building) and not isinstance(entity, Refuge)
-    # ]
 
-    all_road = self._world_info.get_entities_of_types([Road])
+    all_roads = self._world_info.get_entities_of_types([Road])
 
     road_entity_ids: list[EntityID] = [
-      entity.get_entity_id() for entity in all_road if not isinstance(entity, Refuge)
+      entity.get_entity_id()
+      for entity in all_roads
+      if isinstance(entity, Road)
     ]
-
     return set(road_entity_ids)
+  
+  #見探索リストの更新
+  def _update_unreached_roads(self) -> None:
+    # 視界内に入った道路
+    changed_entities = self._world_info.get_change_set()
+    self._visible_roads = [
+      entity_id
+      for entity_id in changed_entities.get_changed_entities()
+      if isinstance(self._world_info.get_entity(entity_id), Road)
+    ]
+    self._logger.debug(
+      f"[{self._agent_info.get_time()}] _visible_roads: {[str(id) for id in self._visible_roads]}"
+    ) 
+
+    # 視界内の道路だった場合未探索リストから除外する
+    for road_id in self._visible_roads:
+      if road_id in self._unreached_road_ids:
+        self._unreached_road_ids.discard(road_id)
+    self._logger.debug(
+      f"[{self._agent_info.get_time()}] unreached_road_ids: {[str(id) for id in self._unreached_road_ids]}"
+    ) 
+
+ #自分よりIDの小さい土木隊を取得
+  def _update_superior_police_ids(self) -> None:
+    all_police = self._world_info.get_entities_of_types([PoliceForce])
+        
+      # 自分以外のエージェントが同期されるまで待つ
+    if len(all_police) > 1:
+      my_id = self._agent_info.get_entity_id()
+        
+      for police in all_police:            
+        police_id = police.get_entity_id()
+        # 自分より ID が小さいエージェントだけをセットに追加
+        if police_id.get_value() < my_id.get_value():
+          self._superior_police_ids.add(police_id)
+          
+      if self._superior_police_ids:
+        self._logger.info(f"Fixed superior_ids (set): {self._superior_police_ids}")
+
+  # def _init_cluster_priority(self):
+  #   my_cluster_index: int = self._clustering.get_cluster_index(
+  #     self._agent_info.get_entity_id()
+  #   )
+  #   my_center = self._clustering.get_cluster_center(my_cluster_index)
+
+  #   dis_list = []
+  #   num_clusters = self._clustering.get_num_cluster()
+
+  #   for num in range(num_clusters):
+  #     if num == my_cluster_index:
+  #       continue
+  #     target_center = self._clustering.get_cluster_center(num)
+  #     distance = self._world_info.get_distance(my_center.get_x(), my_center.get_y(), target_center.get_x(), target_center.get_y())
+  #     dis_list.append((num, distance))
+
+  #   dis_list.sort(key=lambda x: x[1])
+  #   self._cluster_priority_list = [item[0] for item in dis_list]
+
+  #   self._logger.debug(f"priority_clusters: {[str(id) for id in self._cluster_priority_list]}")
