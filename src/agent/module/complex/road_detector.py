@@ -118,13 +118,13 @@ class RoadDetector(RoadDetector):
       return self
 
     self._target_areas = set()
-    entities = self._world_info.get_entities_of_types([Refuge, Building, GasStation])
-    for entity in entities:
-      building: Building = cast(Building, entity)
-      for entity_id in building.get_neighbors():
-        neighbor = self._world_info.get_entity(entity_id)
-        if isinstance(neighbor, Road):
-          self._target_areas.add(entity_id)
+    # entities = self._world_info.get_entities_of_types([Refuge, Building, GasStation])
+    # for entity in entities:
+    #   building: Building = cast(Building, entity)
+    #   for entity_id in building.get_neighbors():
+    #     neighbor = self._world_info.get_entity(entity_id)
+    #     if isinstance(neighbor, Road):
+    #       self._target_areas.add(entity_id)
 
     self._priority_roads = set()
     for entity in self._world_info.get_entities_of_types([Refuge]):
@@ -133,7 +133,7 @@ class RoadDetector(RoadDetector):
         neighbor = self._world_info.get_entity(entity_id)
         if isinstance(neighbor, Road):
           self._priority_roads.add(entity_id)
-
+    self._refuges = self._world_info.get_entities_of_types([Refuge])
     return self
 
   def update_info(self, message_manager: MessageManager) -> RoadDetector:
