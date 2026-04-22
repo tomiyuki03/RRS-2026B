@@ -2,6 +2,8 @@ from typing import Optional, cast
 
 from rcrscore.entities import Civilian, Entity, EntityID, Human
 from rcrscore.urn import EntityURN
+from rcrscore.commands import AKSpeak
+from rcrscore.entities import Civilian, Human
 
 from adf_core_python.core.agent.develop.develop_data import DevelopData
 from adf_core_python.core.agent.info.agent_info import AgentInfo
@@ -11,6 +13,11 @@ from adf_core_python.core.agent.module.module_manager import ModuleManager
 from adf_core_python.core.component.module.algorithm.clustering import Clustering
 from adf_core_python.core.component.module.complex.human_detector import HumanDetector
 from adf_core_python.core.logger.logger import get_agent_logger
+
+# 評価計算：重みまとめ
+WEIGHT_DISTANCE = 1.0
+WEIGHT_HP = 5.0
+WEIGHT_VOICE = 10.0
 
 # HumanDetectorを継承したクラス
 class SampleHumanDetector(HumanDetector):
@@ -45,6 +52,9 @@ class SampleHumanDetector(HumanDetector):
     # 現在のターゲット（救助対象）
     self._result: Optional[EntityID] = None
 
+    # 声を聞いた市民を記録する
+    self._heard_civilians = {}
+
     # ロガーの生成
     self._logger = get_agent_logger(
       f"{self.__class__.__module__}.{self.__class__.__qualname__}",
@@ -55,6 +65,49 @@ class SampleHumanDetector(HumanDetector):
   def calculate(self) -> HumanDetector:
 
     self._logger.info("=== calculate start ===")
+
+    # 現在のステップ（時間）を取得
+    current_time = self._agent_info.get_time()
+
+    # 古い情報を削除（5ステップ以内だけ残す）
+    self._heard_civilians = {
+        entity_id: heard_time
+        for entity_id, heard_time in self._heard_civilians.items()
+        if current_time - heard_time <= 5
+    }
+ 
+    # 現在保持している「最近声を出した市民一覧」をログ出力
+    self._logger.info(f"heard civilians = {self._heard_civilians}")
+
+    # 現在ステップで受信した音声メッセージ（ヴォイス）を取得
+    heard_commands = self._agent_info.get_heard_commands()
+    self._logger.info(f"heard commands count = {len(heard_commands)}")
+
+    for command in heard_commands:
+
+        # 音声メッセージ（AKSpeak）であるか判定
+        if isinstance(command, AKSpeak):
+
+            # 誰が何を言ったかをログ出力
+            self._logger.info(
+                f"AKSpeak detected -> agent_id = {command.agent_id}, "
+                f"channel = {command.channel}, message = {command.message}"
+            )
+
+            # 発話者（声を出したエンティティ）を取得
+            speaker = self._world_info.get_entity(command.agent_id)
+
+            # 発話者が「市民」の場合のみ記録
+            if isinstance(speaker, Civilian):
+
+                # 「この市民は最近声を出した」として記録
+                # key: 市民ID，value: 最後に声を聞いた時間
+                self._heard_civilians[command.agent_id] = current_time
+
+                # 記録したことをログ出力
+                self._logger.info(
+                    f"heard civilian recorded -> id = {command.agent_id}, time = {current_time}"
+                )
 
     # すでに誰かを搬送中ならその人をターゲットにする
     transport_human: Optional[Human] = self._agent_info.some_one_on_board()
@@ -129,12 +182,29 @@ class SampleHumanDetector(HumanDetector):
 
             distance_score = 1.0 / (distance + 1.0)
             hp_score = 1.0 / (hp + 1.0)
-            priority = distance_score + (5.0 * hp_score)
+
+            voice_bonus = 0.0
+            if entity.get_entity_id() in self._heard_civilians:
+                voice_bonus =1.0
+
+
+            priority = (
+                WEIGHT_DISTANCE * distance_score
+                + WEIGHT_HP * hp_score
+                + WEIGHT_VOICE * voice_bonus
+            )
 
             # 各候補の情報をログ出力
+             # 各候補の情報をログ出力
             self._logger.info(
-                f"candidate from cluster -> id = {entity.get_entity_id()}," 
-                f"distance = {distance}, hp = {hp}, priority = {priority}"
+                f"candidate from cluster -> "
+                f"id = {entity.get_entity_id()}, "
+                f"distance = {distance}, "
+                f"hp = {hp}, "
+                f"distance_score = {distance_score}, "
+                f"hp_score = {hp_score}, "
+                f"voice_bonus = {voice_bonus}, "
+                f"priority = {priority}"
             )
 
             # 今までの最大priorityと比較し，より大きければ更新
@@ -182,12 +252,27 @@ class SampleHumanDetector(HumanDetector):
 
             distance_score = 1.0 / (distance + 1.0)
             hp_score = 1.0 / (hp + 1.0)
-            priority = distance_score + (5.0 * hp_score)
+
+            voice_bonus = 0.0
+            if entity.get_entity_id() in self._heard_civilians:
+                voice_bonus =1.0
+
+            priority = (
+                WEIGHT_DISTANCE * distance_score
+                + WEIGHT_HP * hp_score
+                + WEIGHT_VOICE * voice_bonus
+            )
         
             # 各候補の情報をログ出力
             self._logger.info(
-                f"candidate from world -> id = {entity.get_entity_id()}," 
-                f"distance = {distance}, hp = {hp}, priority = {priority}"
+                f"candidate from world -> "
+                f"id = {entity.get_entity_id()}, "
+                f"distance = {distance}, "
+                f"hp = {hp}, "
+                f"distance_score = {distance_score}, "
+                f"hp_score = {hp_score}, "
+                f"voice_bonus = {voice_bonus}, "
+                f"priority = {priority}"
             )
 
             # 今までの最大priorityと比較し，より大きければ更新
@@ -251,7 +336,7 @@ class SampleHumanDetector(HumanDetector):
     #    return False
 
     # 救急隊：埋没している人は対象外
-    if myself.get_urn() == EntityURN.AMBULANCE_TEAM and buriedness > 0:
+    if myself.get_urn() == EntityURN.AMBULANCE_TEAM and buriedness > 10:
         self._logger.info(f"{target_entity_id}: ambulance team skips buried human (buriedness = {buriedness})")
         return False
 
