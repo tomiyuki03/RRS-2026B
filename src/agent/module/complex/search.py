@@ -1,6 +1,6 @@
 from typing import Optional, cast
 
-from rcrscore.entities import Building, Entity, EntityID, Refuge
+from rcrscore.entities import Building, Entity, EntityID, Refuge,Civilian
 
 from adf_core_python.core.agent.communication.message_manager import MessageManager
 from adf_core_python.core.agent.develop.develop_data import DevelopData
@@ -32,7 +32,12 @@ class SearchB(Search):
     self._unreached_building_ids: set[EntityID] = set()
     #目的地の決定
     self._result: Optional[EntityID] = None
+    #市民がいた建物のIDリスト
+    self._found_civilian_ids: set[EntityID] = set()
+    #逆に誰もいなかった建物のIDリスト
+    self._empty_building_ids: set[EntityID] = set()
 
+    self._search_round:int  = 0
 
 #サブモジュールの取得
     #クラスタリング
@@ -64,29 +69,61 @@ class SearchB(Search):
     super().update_info(message_manager)
     if self.get_count_update_info() > 1:
       return self
-
-    self._logger.debug(
-      f"unreached_building_ids: {[str(id) for id in self._unreached_building_ids]}"
-    )
-
+    
     #現在地の確認とリストの更新
     searched_building_id = self._agent_info.get_position_entity_id()
     #建物の中にいる場合、その建物を探索済みにする
     if searched_building_id is not None:
       self._unreached_building_ids.discard(searched_building_id)
+      self._found_civilian_ids.discard(searched_building_id)
+      self._empty_building_ids.add(searched_building_id)
+    
+    changed_entities = self._world_info.get_change_set()
+    if changed_entities:
+      for entity_id in changed_entities.get_changed_entities():
+        entity = self._world_info.get_entity(entity_id)
+        if isinstance(entity, Civilian) :
+          # 市民(生きてる)のいる場所（建物ID）を記録
+          loc_id = entity.get_position()
+          if entity.get_hp() >= 10 and isinstance(self._world_info.get_entity(loc_id), Building) and not isinstance(self._world_info.get_entity(loc_id), Refuge):
+            self._found_civilian_ids.add(loc_id)
+            self._empty_building_ids.discard(loc_id)
+            self._logger.debug(
+              f"[{self._agent_info.get_time()}]empty_building: {[str(id) for id in self._empty_building_ids]}"
+            ) 
+
+
 
     #探索リストが空になった場合、再取得
     if len(self._unreached_building_ids) == 0:
-      self._unreached_building_ids = self._get_search_targets()
+      # if len(self._found_civilian_ids) > 2:
+      #   self._unreached_building_ids = set(self._found_civilian_ids)
+      #   self._logger.debug(
+      #     f"fonund_civilian: {[str(id) for id in self._found_civilian_ids]}"
+      #   )
+      # else:
+      my_cluster_area = self._get_search_targets(area_all=False)
+      if len(my_cluster_area) == 0:
+        self._unreached_building_ids = self._get_search_targets(area_all=True)
+      else:
+        self._unreached_building_ids = my_cluster_area
+      self._logger.debug(
+        f"[{self._agent_info.get_time()}]unreached_building_ids: {len(self._unreached_building_ids)}"
+      )
+
+
+    #self._update_unreached_buildings()
 
     return self
 
   def calculate(self) -> Search:
+    self._logger.debug(
+      f"[{self._agent_info.get_time()}]search calculate"
+    )
 
     #現時点で一番近い建物のIDと距離の変数を初期化
     target_building_id: Optional[EntityID] = None
     target_score: Optional[float] = None
-    max_score: Optional[float] = None
 
     #自身のクラスタIDを取得
     cluster_index: int = self._clustering.get_cluster_index(
@@ -102,18 +139,22 @@ class SearchB(Search):
       )
       #seed = (building_id.get_value() + self._agent_info.get_entity_id().get_value()) % 100
       #random_bonus = seed * 0.1
-      score = 100000 / (distance + 1) # + random_bonus
+      score = 10000 / (distance + 1) # + random_bonus
 
       #建物が自分のクラスタと同じだった場合重みをプラス
       if self._clustering.get_cluster_index(building_id) == cluster_index:
-        max_score = score * 500.0 #500は仮定値
-      else:
-        max_score = score
+        score += 500  # 100は仮定値
+
+      if building_id in self._found_civilian_ids :#and self._search_round != 1:
+        score += 2000
+        self._logger.debug(
+          f"[{self._agent_info.get_time()}]building_ids: {building_id}"
+        )
       
       #scoreが大きいものにターゲットを更新
-      if target_score is None or target_score < max_score:
+      if target_score is None or target_score < score:
         target_building_id = building_id
-        target_score = max_score
+        target_score = score
 
     self._result = target_building_id
     return self
@@ -141,28 +182,39 @@ class SearchB(Search):
     return self._result
 
   #ターゲットになる建物のリストをつくる
-  def _get_search_targets(self) -> set[EntityID]:
-    #自分の担当クラスタの特定
-    cluster_index: int = self._clustering.get_cluster_index(
-      self._agent_info.get_entity_id()
-    )
-    # #クラスタ内のエンティティを取得
-    # cluster_entities: list[Entity] = self._clustering.get_cluster_entities(
-    #   cluster_index
-    # )
-    # #建物のリストの作成
-    # building_entity_ids: list[EntityID] = [
-    #   entity.get_entity_id()
-    #   for entity in cluster_entities
-    #   if isinstance(entity, Building) and not isinstance(entity, Refuge)
-    # ]
+  def _get_search_targets(self,area_all:bool = False) -> set[EntityID]:
+    if area_all:
+      buildings = self._world_info.get_entities_of_types([Building])
+    else:
+      #自分の担当クラスタの特定
+      cluster_index: int = self._clustering.get_cluster_index(
+        self._agent_info.get_entity_id()
+      )
+      #クラスタ内のエンティティを取得
+      buildings: list[Entity] = self._clustering.get_cluster_entities(
+        cluster_index
+      )
 
-    all_buildings = self._world_info.get_entities_of_types([Building])
-
-    building_entity_ids: list[EntityID] = [
-      entity.get_entity_id()
-      for entity in all_buildings
-      if not isinstance(entity, Refuge)
-    ]
+    building_entity_ids: list[EntityID] = []
+    for entity in buildings:
+      if isinstance(entity, Building) and not isinstance(entity, Refuge):
+        entity_id = entity.get_entity_id()
+        if entity_id not in self._empty_building_ids:
+          building_entity_ids.append(entity_id)
 
     return set(building_entity_ids)
+
+  def _update_unreached_buildings(self) -> None:
+    changed_entities = self._world_info.get_change_set()
+    visible_buildings = [
+      entity_id
+      for entity_id in changed_entities.get_changed_entities()
+      if isinstance(self._world_info.get_entity(entity_id), Building)
+    ]
+
+    for building_id in visible_buildings:
+      building = self._world_info.get_entity(building_id)
+      if isinstance(building, Building):
+        brokenness = building.get_brokenness()
+      if brokenness <= 0:
+        self._unreached_building_ids.discard(building_id)
