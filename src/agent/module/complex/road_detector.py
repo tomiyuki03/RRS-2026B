@@ -62,20 +62,12 @@ class RoadDetector(RoadDetector):
     )
     self.register_sub_module(self._clustering)
 
-    # searchモジュールの設定
-    self._search: Search = cast(
-       PoliceSearch,
-       module_manager.get_module(
-          "RoadDetector.PoliceSearch",
-          "src.agent.module.complex.police_search.PoliceSearch"
-       ),
-    )
-    self.register_sub_module(self._search)
-
-
-
+    # ターゲットの定義
     self._result: Optional[EntityID] = None
 
+    # 前選択したターゲットを記録しておく変数の定義
+    self._pretarget: Optional[EntityID] = None
+    self._pretarget_score = float("-inf")
      
 
 
@@ -87,18 +79,10 @@ class RoadDetector(RoadDetector):
     super().resume(precompute_data)
     if self.get_count_resume() >= 2:
       return self
-
-    # 建物の周りの道路を全て集める
+    
+    # ターゲットエリアの定義
     self._target_areas: set[EntityID] = set()
-    # entities = self._world_info.get_entities_of_types([Refuge, Building, GasStation])
-    # for entity in entities:
-    #   if not isinstance(entity, Building):
-    #     continue
-    #   for entity_id in entity.get_neighbors():
-    #     neighbor = self._world_info.get_entity(entity_id)
-    #     if isinstance(neighbor, Road):
-    #       self._target_areas.add(entity_id)
-
+    
     # 避難所の周りの道路を全て集める
     self._priority_roads = set()
     for entity in self._world_info.get_entities_of_types([Refuge]):# 避難所だけをentitiesに入れている
@@ -109,6 +93,7 @@ class RoadDetector(RoadDetector):
         if isinstance(neighbor, Road):
           self._priority_roads.add(entity_id)
 
+    # すべての避難所を避難所リストにあつめる
     self._refuges = self._world_info.get_entities_of_types([Refuge])
     return self
 
@@ -116,16 +101,11 @@ class RoadDetector(RoadDetector):
     super().prepare()
     if self.get_count_prepare() >= 2:
       return self
-
+    
+    # ターゲットエリアの定義
     self._target_areas = set()
-    # entities = self._world_info.get_entities_of_types([Refuge, Building, GasStation])
-    # for entity in entities:
-    #   building: Building = cast(Building, entity)
-    #   for entity_id in building.get_neighbors():
-    #     neighbor = self._world_info.get_entity(entity_id)
-    #     if isinstance(neighbor, Road):
-    #       self._target_areas.add(entity_id)
-
+   
+   # 避難所の周りの道路を全て集める
     self._priority_roads = set()
     for entity in self._world_info.get_entities_of_types([Refuge]):
       refuge: Refuge = cast(Refuge, entity)
@@ -133,6 +113,8 @@ class RoadDetector(RoadDetector):
         neighbor = self._world_info.get_entity(entity_id)
         if isinstance(neighbor, Road):
           self._priority_roads.add(entity_id)
+
+    # すべての避難所を避難所リストにあつめる
     self._refuges = self._world_info.get_entities_of_types([Refuge])
     return self
 
@@ -140,12 +122,16 @@ class RoadDetector(RoadDetector):
     super().update_info(message_manager)
     if self.get_count_update_info() >= 2:
       return self
+    
+    # すべての市民を集める
     self._civilian = self._world_info.get_entities_of_types([Civilian])
 
+    # すべての道から瓦礫のある道をターゲット候補リストに集める
     for road in self._world_info.get_entities_of_types([Road]):
       if road.get_blockades() is not None and len(road.get_blockades()) > 0:
         self._target_areas.add(road.get_entity_id())
 
+    # 瓦礫のない道を除外リストに入れる
     remove_list = []
     for target in self._target_areas:
       entity = self._world_info.get_entity(target)
@@ -153,15 +139,16 @@ class RoadDetector(RoadDetector):
         if entity.get_blockades() == []:
             remove_list.append(target)
 
+    # ターゲット候補リストから
     for r in remove_list:
       self._target_areas.discard(r)
 
-
+    # 現在地を記録
     agent_pos = self._agent_info.get_position_entity_id()
-
+    # 現在地から指定距離離れているターゲットをターげと候補リストから除外
     filtered = set()
     for t in self._target_areas:
-      if self._world_info.get_distance(agent_pos, t) < 20000:
+      if self._world_info.get_distance(agent_pos, t) < 80000:
         filtered.add(t)
     self._target_areas = filtered
 
@@ -180,9 +167,6 @@ class RoadDetector(RoadDetector):
           if road.get_blockades() == []:
             self._target_areas.discard(self._result)
             self._result = None
-    
-    
-
 
     # 現在位置の取得
     agent_position = self._agent_info.get_position_entity_id()
@@ -245,6 +229,7 @@ class RoadDetector(RoadDetector):
         self._result = None
     else:
         path = self._path_planning.get_path(agent_position, _highest_target_area)
+
         if path is not None and len(path) > 0:
             self._result = path[-1]
     return self
