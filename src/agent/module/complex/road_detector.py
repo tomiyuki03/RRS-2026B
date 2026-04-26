@@ -64,6 +64,8 @@ class RoadDetector(RoadDetector):
 
     # ターゲットの定義
     self._result: Optional[EntityID] = None
+    # 前ステップのターゲットを保持する
+    self._pre_target: Optional[EntityID] = None
     
      
 
@@ -201,32 +203,42 @@ class RoadDetector(RoadDetector):
     return self
 
   def calculate(self) -> RoadDetector:
+
+    # 災害救助隊の位置を集める
     self._police = self._world_info.get_entities_of_types([PoliceForce])
     self._fire = self._world_info.get_entities_of_types([FireBrigade])
     self._ambulance = self._world_info.get_entities_of_types([AmbulanceTeam])
     
-    # 毎回再評価
+    # 現在位置の確認
     agent_position = self._agent_info.get_position_entity_id()
     if agent_position is None:
         return self
 
+    # 最適ターゲットエリアの定義
     _highest_target_area = agent_position
     _highest_evaluate = _PRIOLITY_MIN
-
+    # ターゲットエリアがない場合，サーチに移行
     if len(self._target_areas) == 0:
       self._result = None
       return self
     
+    # すべてのターゲットエリアの評価計算
     for target_area in self._target_areas:
         score = self._evaluate(target_area)
         if score > _highest_evaluate:
             _highest_evaluate = score
             _highest_target_area = target_area
 
+    # 最大評価値が閾値より高い時のみタスクを変更
     if _highest_evaluate == _PRIOLITY_MIN:
         self._result = None
     else:
-        path = self._path_planning.get_path(agent_position, _highest_target_area)
+        if self._path_evaluate(_highest_target_area) > self._path_evaluate(self._pre_target):
+          # 経路を探索
+          path = self._path_planning.get_path(agent_position, _highest_target_area)
+          self._pre_target = _highest_target_area
+        else:
+           path = self._path_planning.get_path(agent_position, self._pre_target)
 
         if path is not None and len(path) > 0:
             self._result = path[-1]
@@ -245,6 +257,18 @@ class RoadDetector(RoadDetector):
       + self._score_clustering(target_area) * _WEIGHT_CLUSTERING
     )
   
+  # 経路評価値計算
+  def _path_evaluate(self,target_area :EntityID) -> float:
+     return(
+        self._score_path(target_area) * _WEIGHT_DISTANCE
+      + self._score_priority_road(target_area) * _WEIGHT_PRIORITY_ROAD
+      + self._score_PoliceForce(target_area) * _WEIGHT_POLICEFORCE
+      + self._score_FireBrigade(target_area) * _WEIGHT_FIREBRIGADE
+      + self._score_AmbulanceTeam(target_area) * _WEIGHT_AMBULANCETEAM
+      + self._score_civilians(target_area) * _WEIGHT_CIVILIAN
+      + self._score_refuge_distance(target_area) * _WEIGHT_REFUGE_DISTANCE
+      + self._score_clustering(target_area) * _WEIGHT_CLUSTERING
+     )
 
   # 距離スコア：距離+1の逆数を返す(0除算対策)
   def _score_distance(self,target_area :EntityID) -> float:
@@ -256,6 +280,22 @@ class RoadDetector(RoadDetector):
     
     return  1/((self._world_info.get_distance(agent_position, target_area)/1000)+1)
   
+  # 経路スコア：経路の逆数
+  def _score_path(self,target_area):
+     #現在位置の取得
+    agent_position = self._agent_info.get_position_entity_id()
+    # 現在位置の取得確認
+    if agent_position is None:
+      return float("-inf")
+    
+    # 経路を探索
+    path = self._path_planning.get_path(agent_position, target_area)
+    if path is None:
+       return float("inf")
+    
+    return 100/(len(path) + 1)
+
+
   # 優先道路スコア：優先道路に含まれているか
   def _score_priority_road(self,target_area:EntityID) -> float:
     return 1.0 if target_area in self._priority_roads else 0.0
