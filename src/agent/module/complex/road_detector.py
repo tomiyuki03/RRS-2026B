@@ -233,7 +233,7 @@ class RoadDetector(RoadDetector):
     if _highest_evaluate == _PRIOLITY_MIN:
         self._result = None
     else:
-        if self._path_evaluate(_highest_target_area) > self._path_evaluate(self._pre_target):
+        if self._path_evaluate(_highest_target_area) > self._path_evaluate(self._pre_target) or self._pre_target == None:
           # 経路を探索
           path = self._path_planning.get_path(agent_position, _highest_target_area)
           self._pre_target = _highest_target_area
