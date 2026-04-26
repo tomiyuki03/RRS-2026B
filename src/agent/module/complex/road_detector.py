@@ -18,9 +18,9 @@ from adf_core_python.core.component.module.complex.road_detector import RoadDete
 from rcrscore.urn import EntityURN
 
 # 評価計算：重みまとめ
-_WEIGHT_DISTANCE = 400.0
+_WEIGHT_DISTANCE = 100.0
 _WEIGHT_PRIORITY_ROAD = 500.0
-_WEIGHT_POLICEFORCE = 2000.0
+_WEIGHT_POLICEFORCE = 500.0
 _WEIGHT_FIREBRIGADE = 3000.0
 _WEIGHT_AMBULANCETEAM = 3000.0
 _WEIGHT_CIVILIAN = 1000.0
@@ -64,10 +64,7 @@ class RoadDetector(RoadDetector):
 
     # ターゲットの定義
     self._result: Optional[EntityID] = None
-
-    # 前選択したターゲットを記録しておく変数の定義
-    self._pretarget: Optional[EntityID] = None
-    self._pretarget_score = float("-inf")
+    
      
 
 
@@ -139,16 +136,17 @@ class RoadDetector(RoadDetector):
         if entity.get_blockades() == []:
             remove_list.append(target)
 
-    # ターゲット候補リストから
+    # ターゲット候補リストから除外リストに踏まれているものを除外
     for r in remove_list:
       self._target_areas.discard(r)
 
     # 現在地を記録
     agent_pos = self._agent_info.get_position_entity_id()
-    # 現在地から指定距離離れているターゲットをターげと候補リストから除外
+
+    # 現在地から指定距離離れているターゲットをターゲット候補リストから除外
     filtered = set()
     for t in self._target_areas:
-      if self._world_info.get_distance(agent_pos, t) < 80000:
+      if self._world_info.get_distance(agent_pos, t) < 20000:
         filtered.add(t)
     self._target_areas = filtered
 
@@ -348,27 +346,11 @@ class RoadDetector(RoadDetector):
 
     if my_cluster is None or target_cluster is None:
         return 0.0
-
     return 1.0 if target_cluster == my_cluster else -1.0
-   # エリア内近隣にいるエージェントをカウントする
+  
+   # エリア内近隣にいるエージェントをカウント+距離を計測する
   def _agent_erea_count(self,agent,target_area):
     count = 0
-    #_neighbor_road = set()
-    #target_entity = self._world_info.get_entity(target_area)
-    
-    # # 近隣道路を集める
-    # for entity_id in target_entity.get_neighbors():
-    #     neighbor = self._world_info.get_entity(entity_id)
-    #     if isinstance(neighbor, Road):
-    #       _neighbor_road.add(entity_id)
-    
-    # # 該当種類のエージェントが近隣道路にいるなら+0.5,その場にいるなら+1
-    # for age in agent:
-    #   pos = age.get_position()
-    #   if pos == target_area:
-    #     count += 1
-    #   if pos in _neighbor_road:
-    #     count += 0.3
     for age in agent:
       d = self._world_info.get_distance(target_area,age.get_position())
       count += 100/(1+d)
